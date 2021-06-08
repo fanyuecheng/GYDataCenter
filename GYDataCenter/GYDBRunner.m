@@ -11,7 +11,6 @@
 #endif
 
 #import "GYDBRunner.h"
-
 #import "FMDatabaseQueue+Async.h"
 #import "GYDCUtilities.h"
 #import "GYModelObjectProtocol.h"
@@ -28,18 +27,19 @@ static const BOOL kAutoTransaction = YES;
 static const double kTransactionTimeInterval = 1;
 
 @interface GYDatabaseInfo : NSObject
+
 @property (nonatomic, strong) FMDatabaseQueue *databaseQueue;
 @property (nonatomic, strong) NSMutableSet *updatedTables;
 @property (nonatomic, strong) dispatch_source_t timer;
 @property (nonatomic, assign) BOOL needCommitTransaction;
 @property (nonatomic, assign) NSInteger writeCount;
+
 @end
 
 @implementation GYDatabaseInfo
 
-- (id)init {
-    self = [super init];
-    if (self) {
+- (instancetype)init {
+    if (self = [super init]) {
         _updatedTables = [[NSMutableSet alloc] init];
     }
     return self;
@@ -48,12 +48,13 @@ static const double kTransactionTimeInterval = 1;
 @end
 
 @interface GYDBRunner ()
-@property NSMutableDictionary *writeCounts;
+
+@property (nonatomic, strong) NSMutableDictionary *databaseInfos;
+@property (nonatomic, strong) NSMutableDictionary *writeCounts;
+
 @end
 
-@implementation GYDBRunner {
-    NSMutableDictionary *_databaseInfos;
-}
+@implementation GYDBRunner
 
 #pragma mark - Initialization
 
@@ -62,7 +63,6 @@ static const double kTransactionTimeInterval = 1;
     static dispatch_once_t onceToken;
     dispatch_once(&onceToken, ^{
         sharedInstance = [[GYDBRunner alloc] initWithCacheDelegate:delegate];
-        
         NSData *data = [NSData dataWithContentsOfFile:[self pathForAnalyzeStatistics]];
         if (data.length) {
             sharedInstance.writeCounts = [NSPropertyListSerialization propertyListWithData:data options:NSPropertyListMutableContainers format:nil error:nil];
@@ -99,12 +99,10 @@ static const double kTransactionTimeInterval = 1;
     if (properties.count) {
         columnSql = [self columnSqlForClass:modelClass properties:properties withPrefix:NO];
     }
-    
     NSMutableString *sql = [[NSMutableString alloc] initWithFormat:@"SELECT %@ FROM %@", columnSql, [modelClass tableName]];
     if (where) {
         [sql appendFormat:@" %@", where];
     }
-    
     NSUInteger length = properties.count;
     if (!length) {
         length = [GYDCUtilities persistentPropertiesForClass:modelClass].count;
@@ -115,7 +113,10 @@ static const double kTransactionTimeInterval = 1;
     [databaseInfo.databaseQueue syncInDatabase:^(FMDatabase *db) {
         FMResultSet *resultSet = [db executeQuery:sql withArgumentsInArray:arguments];
         while ([resultSet next]) {
-            id object = [self objectOfClass:modelClass resultSet:resultSet range:NSMakeRange(0, length) properties:indexedProperties];
+            id object = [self objectOfClass:modelClass
+                                  resultSet:resultSet
+                                      range:NSMakeRange(0, length)
+                                 properties:indexedProperties];
             [objects addObject:object];
         }
     }];
@@ -125,7 +126,7 @@ static const double kTransactionTimeInterval = 1;
 
 - (NSArray *)objectsOfClass:(Class<GYModelObjectProtocol>)leftClass
                  properties:(NSArray *)leftProperties
-                      class:(Class<GYModelObjectProtocol>)rightClass
+                 rightClass:(Class<GYModelObjectProtocol>)rightClass
                  properties:(NSArray *)rightProperties
                    joinType:(GYSQLJoinType)joinType
               joinCondition:(NSString *)joinCondition
@@ -179,12 +180,18 @@ static const double kTransactionTimeInterval = 1;
     [databaseInfo.databaseQueue syncInDatabase:^(FMDatabase *db) {
         FMResultSet *resultSet = [db executeQuery:sql withArgumentsInArray:arguments];
         while ([resultSet next]) {
-            [leftObjects addObject:[self objectOfClass:leftClass resultSet:resultSet range:NSMakeRange(0, leftLength) properties:leftIndexedProperties]];
-            [rightObjects addObject:[self objectOfClass:rightClass resultSet:resultSet range:NSMakeRange(leftLength, rightLength) properties:rightIndexedProperties]];
+            [leftObjects addObject:[self objectOfClass:leftClass
+                                             resultSet:resultSet
+                                                 range:NSMakeRange(0, leftLength)
+                                            properties:leftIndexedProperties]];
+            [rightObjects addObject:[self objectOfClass:rightClass
+                                              resultSet:resultSet
+                                                  range:NSMakeRange(leftLength, rightLength)
+                                             properties:rightIndexedProperties]];
         }
     }];
     
-    return @[ leftObjects, rightObjects ];
+    return @[leftObjects, rightObjects];
 }
 
 - (NSString *)columnSqlForClass:(Class<GYModelObjectProtocol>)modelClass
@@ -247,20 +254,32 @@ static const double kTransactionTimeInterval = 1;
             if (!object) {
                 object = [[(Class)modelClass alloc] init];
             }
-            [self setProperty:property ofObject:object withResultSet:resultSet index:(int)i];
+            [self setProperty:property
+                     ofObject:object
+                withResultSet:resultSet
+                        index:(int)i];
         }
     }
     return object;
 }
 
-- (void)setProperty:(NSString *)property ofObject:(id)modelObject withResultSet:(FMResultSet *)resultSet index:(int)index {
-    id value = [self valueForClass:[modelObject class] property:property resultSet:resultSet index:index];
+- (void)setProperty:(NSString *)property
+           ofObject:(id)modelObject
+      withResultSet:(FMResultSet *)resultSet
+              index:(int)index {
+    id value = [self valueForClass:[modelObject class]
+                          property:property
+                         resultSet:resultSet
+                             index:index];
     if (value) {
         [modelObject setValue:value forKey:property];
     }
 }
 
-- (id)valueForClass:(Class<GYModelObjectProtocol>)modelClass property:(NSString *)property resultSet:(FMResultSet *)resultSet index:(int)index {
+- (id)valueForClass:(Class<GYModelObjectProtocol>)modelClass
+           property:(NSString *)property
+          resultSet:(FMResultSet *)resultSet
+              index:(int)index {
     GYPropertyType propertyType = [[[modelClass propertyTypes] objectForKey:property] unsignedIntegerValue];
     Class propertyClass;
     if (propertyType == GYPropertyTypeRelationship) {
@@ -282,7 +301,7 @@ static const double kTransactionTimeInterval = 1;
                 Class propertyClass = [[modelClass propertyClasses] objectForKey:property];
                 value = [propertyClass reverseTransformedValue:data];
             } else {
-                value = [self valueAfterDecodingData:data];
+                value = [self valueAfterDecodingData:data class:modelClass];
             }
             if (!value) {
                 NSAssert(NO, @"database=%@, table=%@, property=%@", [modelClass dbName], [modelClass tableName], property);
@@ -318,10 +337,15 @@ static const double kTransactionTimeInterval = 1;
     }
 }
 
-- (id)valueAfterDecodingData:(NSData *)data {
+- (id)valueAfterDecodingData:(NSData *)data
+                       class:(Class<GYModelObjectProtocol>)modelClass {
     id value = nil;
     @try {
-        value = [NSKeyedUnarchiver unarchiveObjectWithData:data];
+        if (@available(iOS 12, *)) {
+            value = [NSKeyedUnarchiver unarchivedObjectOfClass:modelClass fromData:data error:nil];
+        } else {
+            value = [NSKeyedUnarchiver unarchiveObjectWithData:data];
+        }
     }
     @catch (NSException *exception) {
         value = nil;
@@ -512,7 +536,11 @@ static const double kTransactionTimeInterval = 1;
 }
 
 - (NSData *)dataAfterEncodingObject:(id<NSCoding>)object {
-    return [NSKeyedArchiver archivedDataWithRootObject:object];
+    if (@available(iOS 12.0, *)) {
+        return [NSKeyedArchiver archivedDataWithRootObject:object requiringSecureCoding:YES error:nil];;
+    } else {
+        return [NSKeyedArchiver archivedDataWithRootObject:object];
+    }
 }
 
 - (void)deleteClass:(Class<GYModelObjectProtocol>)modelClass
@@ -1006,7 +1034,7 @@ static const double kTransactionTimeInterval = 1;
 }
 
 - (void)autoTransactionForDatabaseInfo:(GYDatabaseInfo *)databaseInfo {
-    databaseInfo.timer = dispatch_source_create(DISPATCH_SOURCE_TYPE_TIMER, 0, 0, [databaseInfo.databaseQueue queue]);
+    databaseInfo.timer = dispatch_source_create(DISPATCH_SOURCE_TYPE_TIMER, 0, 0, [databaseInfo.databaseQueue getQueue]);
     if (databaseInfo.timer) {
         [databaseInfo.databaseQueue asyncInDatabase:^(FMDatabase *db) {
             [db beginTransaction];

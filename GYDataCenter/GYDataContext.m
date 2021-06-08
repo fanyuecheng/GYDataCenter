@@ -7,7 +7,6 @@
 //
 
 #import "GYDataContext.h"
-
 #import "GYDCUtilities.h"
 #import "GYModelObjectProtocol.h"
 #import <objc/runtime.h>
@@ -15,6 +14,7 @@
 
 @interface GYDataContextQueue : NSObject
 
+@property (nonatomic, strong) dispatch_queue_t queue;
 @property (nonatomic, strong) NSMutableDictionary *cache;
 
 - (instancetype)initWithDBName:(NSString *)dbName;
@@ -24,18 +24,15 @@
 
 @end
 
-@implementation GYDataContextQueue {
-    dispatch_queue_t _queue;
-}
+@implementation GYDataContextQueue
 
 static const void * const kDispatchQueueSpecificKey = &kDispatchQueueSpecificKey;
 
 - (instancetype)initWithDBName:(NSString *)dbName {
-    self = [super init];
-    if (self) {
+    if (self = [super init]) {
+        _cache = [[NSMutableDictionary alloc] init];
         _queue = dispatch_queue_create([[NSString stringWithFormat:@"GYDataCenter.%@", dbName] UTF8String], NULL);
         dispatch_queue_set_specific(_queue, kDispatchQueueSpecificKey, (__bridge void *)self, NULL);
-        _cache = [[NSMutableDictionary alloc] init];
     }
     return self;
 }
@@ -61,12 +58,13 @@ static const void * const kDispatchQueueSpecificKey = &kDispatchQueueSpecificKey
 @end
 
 @interface GYDataContext ()<GYDBCache>
+
+@property (nonatomic, strong) GYDBRunner *dbRunner;
 @property (nonatomic, strong) NSMutableDictionary *dataCenterQueues;
+
 @end
 
-@implementation GYDataContext {
-    GYDBRunner *_dbRunner;
-}
+@implementation GYDataContext
 
 #pragma mark - Initialization
 
@@ -81,8 +79,7 @@ static const void * const kDispatchQueueSpecificKey = &kDispatchQueueSpecificKey
 }
 
 - (instancetype)init {
-    self = [super init];
-    if (self) {
+    if (self = [super init]) {
         _dbRunner = [GYDBRunner sharedInstanceWithCacheDelegate:self];
         _dataCenterQueues = [[NSMutableDictionary alloc] init];
         
@@ -120,10 +117,10 @@ static const void * const kDispatchQueueSpecificKey = &kDispatchQueueSpecificKey
         object = [cache objectForKey:primaryKey];
         if (!object || ((id<GYModelObjectProtocol>)object).isFault) {
             NSString *where = [self whereIdSqlForClass:modelClass];
-            NSArray *objects = [_dbRunner objectsOfClass:modelClass
-                                              properties:properties
-                                                   where:where
-                                               arguments:@[ primaryKey ]];
+            NSArray *objects = [self.dbRunner objectsOfClass:modelClass
+                                                  properties:properties
+                                                       where:where
+                                                   arguments:@[primaryKey]];
             object = [objects firstObject];
             if (object && !properties.count) {
                 [cache setObject:object forKey:primaryKey];
@@ -140,10 +137,10 @@ static const void * const kDispatchQueueSpecificKey = &kDispatchQueueSpecificKey
     GYDataContextQueue *queue = [self queueForDBName:[modelClass dbName]];
     __block NSArray *result;
     [queue dispatchSync:^{
-        result = [_dbRunner objectsOfClass:modelClass
-                                properties:properties
-                                     where:where
-                                 arguments:arguments];
+        result = [self.dbRunner objectsOfClass:modelClass
+                                    properties:properties
+                                         where:where
+                                     arguments:arguments];
         if (!properties.count) {
             NSMutableDictionary *cache = [self tableCacheFromDBCache:queue.cache class:modelClass];
             if (cache) {
@@ -169,14 +166,14 @@ static const void * const kDispatchQueueSpecificKey = &kDispatchQueueSpecificKey
     GYDataContextQueue *queue = [self queueForDBName:[leftClass dbName]];
     __block NSArray *result;
     [queue dispatchSync:^{
-        result = [_dbRunner objectsOfClass:leftClass
-                                properties:leftProperties
-                                     class:rightClass
-                                properties:rightProperties
-                                  joinType:joinType
-                             joinCondition:joinCondition
-                                     where:where
-                                 arguments:arguments];
+        result = [self.dbRunner objectsOfClass:leftClass
+                                    properties:leftProperties
+                                    rightClass:rightClass
+                                    properties:rightProperties
+                                      joinType:joinType
+                                 joinCondition:joinCondition
+                                          where:where
+                                     arguments:arguments];
         if (!leftProperties.count) {
             NSMutableDictionary *cache = [self tableCacheFromDBCache:queue.cache class:leftClass];
             if (cache) {
@@ -211,9 +208,9 @@ static const void * const kDispatchQueueSpecificKey = &kDispatchQueueSpecificKey
     GYDataContextQueue *queue = [self queueForDBName:[modelClass dbName]];
     __block NSArray *result;
     [queue dispatchSync:^{
-        result = [_dbRunner idsOfClass:modelClass
-                                 where:where
-                             arguments:arguments];
+        result = [self.dbRunner idsOfClass:modelClass
+                                     where:where
+                                 arguments:arguments];
     }];
     return result;
 }
@@ -225,10 +222,10 @@ static const void * const kDispatchQueueSpecificKey = &kDispatchQueueSpecificKey
     GYDataContextQueue *queue = [self queueForDBName:[modelClass dbName]];
     __block NSNumber *result;
     [queue dispatchSync:^{
-        result = [_dbRunner aggregateOfClass:modelClass
-                                    function:function
-                                       where:where
-                                   arguments:arguments];
+        result = [self.dbRunner aggregateOfClass:modelClass
+                                        function:function
+                                           where:where
+                                       arguments:arguments];
     }];
     return result;
 }
@@ -246,14 +243,12 @@ static const void * const kDispatchQueueSpecificKey = &kDispatchQueueSpecificKey
         if (object.isSaving) {
             return;
         }
-        
         [(id)object setValue:@YES forKey:@"saving"];
-        [_dbRunner saveObject:object];
+        [self.dbRunner saveObject:object];
         NSMutableDictionary *cache = [self tableCacheFromDBCache:queue.cache class:modelClass];
         if (cache) {
             [cache setObject:object forKey:[(id)object valueForKey:[modelClass primaryKey]]];
         }
-        
         [(id)object setValue:@NO forKey:@"saving"];
     }];
 }
@@ -275,11 +270,10 @@ static const void * const kDispatchQueueSpecificKey = &kDispatchQueueSpecificKey
             [cache removeObjectForKey:primaryKey];
             [object setValue:@YES forKey:@"deleted"];
         }
-        
         NSString *where = [self whereIdSqlForClass:modelClass];
-        [_dbRunner deleteClass:modelClass
-                         where:where
-                     arguments:@[ primaryKey ]];
+        [self.dbRunner deleteClass:modelClass
+                             where:where
+                         arguments:@[primaryKey]];
     }];
 }
 
@@ -289,7 +283,9 @@ static const void * const kDispatchQueueSpecificKey = &kDispatchQueueSpecificKey
     GYDataContextQueue *queue = [self queueForDBName:[modelClass dbName]];
     
     [queue dispatchAsync:^{
-        NSArray *ids = [_dbRunner idsOfClass:modelClass where:where arguments:arguments];
+        NSArray *ids = [self.dbRunner idsOfClass:modelClass
+                                           where:where
+                                       arguments:arguments];
         NSMutableDictionary *cache = [self tableCacheFromDBCache:queue.cache class:modelClass];
         if (cache) {
             for (id singleId in ids) {
@@ -300,8 +296,9 @@ static const void * const kDispatchQueueSpecificKey = &kDispatchQueueSpecificKey
                 }
             }
         }
-        
-        [_dbRunner deleteClass:modelClass where:where arguments:arguments];
+        [self.dbRunner deleteClass:modelClass
+                             where:where
+                         arguments:arguments];
     }];
 }
 
@@ -321,7 +318,10 @@ static const void * const kDispatchQueueSpecificKey = &kDispatchQueueSpecificKey
         [cache removeObjectForKey:primaryKey];
         
         NSString *where = [self whereIdSqlForClass:modelClass];
-        [_dbRunner updateClass:modelClass set:set where:where arguments:@[ primaryKey ]];
+        [self.dbRunner updateClass:modelClass
+                               set:set
+                             where:where
+                         arguments:@[primaryKey]];
     }];
 }
 
@@ -351,13 +351,18 @@ static const void * const kDispatchQueueSpecificKey = &kDispatchQueueSpecificKey
                 }
             }
         }
-        
         NSString *where = [self whereIdSqlForClass:modelClass];
-        NSArray *arguments = @[ primaryKey ];
-        [_dbRunner updateClass:modelClass set:set where:where arguments:arguments];
+        NSArray *arguments = @[primaryKey];
+        [self.dbRunner updateClass:modelClass
+                               set:set
+                             where:where
+                         arguments:arguments];
         
         if (!result) {
-            result = [_dbRunner objectsOfClass:modelClass properties:nil where:where arguments:arguments].firstObject;
+            result = [self.dbRunner objectsOfClass:modelClass
+                                        properties:nil
+                                             where:where
+                                         arguments:arguments].firstObject;
         }
         if (result) {
             [cache setObject:result forKey:primaryKey];
@@ -378,7 +383,9 @@ static const void * const kDispatchQueueSpecificKey = &kDispatchQueueSpecificKey
         
         NSMutableDictionary *cache = [self tableCacheFromDBCache:queue.cache class:modelClass];
         if (cache) {
-            NSArray *ids = [_dbRunner idsOfClass:modelClass where:where arguments:arguments];
+            NSArray *ids = [self.dbRunner idsOfClass:modelClass
+                                               where:where
+                                           arguments:arguments];
             if (!ids.count) return;
             if (ids.count == 1) {
                 simplifiedWhere = [self whereIdSqlForClass:modelClass];
@@ -390,7 +397,10 @@ static const void * const kDispatchQueueSpecificKey = &kDispatchQueueSpecificKey
             }
         }
         
-        [_dbRunner updateClass:modelClass set:set where:simplifiedWhere arguments:simplifiedArguments];
+        [self.dbRunner updateClass:modelClass
+                               set:set
+                             where:simplifiedWhere
+                         arguments:simplifiedArguments];
     }];
 }
 
@@ -409,14 +419,14 @@ static const void * const kDispatchQueueSpecificKey = &kDispatchQueueSpecificKey
                dbName:(NSString *)dbName {
     GYDataContextQueue *queue = [self queueForDBName:dbName];
     [queue dispatchSync:^{
-        [_dbRunner beginTransactionForDbName:dbName];
+        [self.dbRunner beginTransactionForDbName:dbName];
         block();
-        [_dbRunner commitTransactionForDbName:dbName];
+        [self.dbRunner commitTransactionForDbName:dbName];
     }];
 }
 
 - (void)vacuumAllDBs {
-    [_dbRunner vacuumAllDBs];
+    [self.dbRunner vacuumAllDBs];
 }
 
 - (void)synchronizeAllData {
@@ -427,7 +437,7 @@ static const void * const kDispatchQueueSpecificKey = &kDispatchQueueSpecificKey
     for (NSString *dbName in dataCenterQueues.allKeys) {
         GYDataContextQueue *queue = [dataCenterQueues objectForKey:dbName];
         [queue dispatchSync:^{
-            [_dbRunner synchronizeDB:dbName];
+            [self.dbRunner synchronizeDB:dbName];
             [queue.cache removeAllObjects];
         }];
     }
@@ -445,7 +455,6 @@ static const void * const kDispatchQueueSpecificKey = &kDispatchQueueSpecificKey
                 @autoreleasepool {
                     if ([[[[tableCache allValues] firstObject] class] cacheLevel] != GYCacheLevelDefault) continue;
                 }
-                
                 for (id key in tableCache.allKeys) {
                     id object = [tableCache objectForKey:key];
                     if (CFGetRetainCount((__bridge CFTypeRef)object) == 2) {
@@ -494,9 +503,9 @@ static const void * const kDispatchQueueSpecificKey = &kDispatchQueueSpecificKey
 
 - (NSMutableDictionary *)tableCacheFromDBCache:(NSMutableDictionary *)cache
                                          class:(Class<GYModelObjectProtocol>)modelClass {
-    if ([modelClass cacheLevel] == GYCacheLevelNoCache)
+    if ([modelClass cacheLevel] == GYCacheLevelNoCache) {
         return nil;
-    
+    }
     if (![modelClass primaryKey]) {
         return nil;
     }
@@ -512,15 +521,12 @@ static const void * const kDispatchQueueSpecificKey = &kDispatchQueueSpecificKey
 
 - (NSString *)whereIdSqlForClass:(Class<GYModelObjectProtocol>)modelClass {
     NSAssert([modelClass primaryKey], @"modelClass must have primary key");
-    
     static const void * const kWhereIdSqlKey = &kWhereIdSqlKey;
     NSString *sql = objc_getAssociatedObject(modelClass, kWhereIdSqlKey);
-    
     if (!sql) {
         sql = [[NSString alloc] initWithFormat:@"WHERE %@=?", [GYDCUtilities columnForClass:modelClass property:[modelClass primaryKey]]];
         objc_setAssociatedObject(modelClass, kWhereIdSqlKey, sql, OBJC_ASSOCIATION_COPY_NONATOMIC);
     }
-    
     return sql;
 }
 

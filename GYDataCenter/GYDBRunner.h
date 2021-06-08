@@ -8,6 +8,8 @@
 
 #import <Foundation/Foundation.h>
 
+NS_ASSUME_NONNULL_BEGIN
+
 typedef NS_ENUM(NSInteger, GYSQLJoinType) {
     GYSQLJoinTypeInner,
     GYSQLJoinTypeLeft,
@@ -44,7 +46,7 @@ typedef NS_ENUM(NSInteger, GYSQLJoinType) {
  */
 
 - (NSArray *)objectsOfClass:(Class<GYModelObjectProtocol>)modelClass
-                 properties:(NSArray *)properties
+                 properties:(nullable NSArray *)properties
                       where:(NSString *)where
                   arguments:(NSArray *)arguments;
 
@@ -72,7 +74,7 @@ typedef NS_ENUM(NSInteger, GYSQLJoinType) {
 
 - (NSArray *)objectsOfClass:(Class<GYModelObjectProtocol>)leftClass
                  properties:(NSArray *)leftProperties
-                      class:(Class<GYModelObjectProtocol>)rightClass
+                 rightClass:(Class<GYModelObjectProtocol>)rightClass
                  properties:(NSArray *)rightProperties
                    joinType:(GYSQLJoinType)joinType
               joinCondition:(NSString *)joinCondition
@@ -154,6 +156,7 @@ typedef NS_ENUM(NSInteger, GYSQLJoinType) {
           arguments:(NSArray *)arguments;
 
 - (void)beginTransactionForDbName:(NSString *)dbName;
+
 - (void)commitTransactionForDbName:(NSString *)dbName;
 
 - (void)vacuumAllDBs;
@@ -161,3 +164,5 @@ typedef NS_ENUM(NSInteger, GYSQLJoinType) {
 - (void)synchronizeDB:(NSString *)dbName;
 
 @end
+
+NS_ASSUME_NONNULL_END

@@ -8,21 +8,36 @@
 
 #import "FMDatabaseQueue+Async.h"
 #import <sqlite3.h>
+#import <objc/runtime.h>
 
 static const void * const kDatabaseQueueSpecificKey = &kDatabaseQueueSpecificKey;
 
 @implementation FMDatabaseQueue (Async)
 
-- (dispatch_queue_t)queue {
-    return _queue;
+- (dispatch_queue_t)getQueue {
+    Ivar ivar = class_getInstanceVariable([self class], "_queue");
+    dispatch_queue_t queue = object_getIvar(self, ivar);
+    return queue;
+}
+
+- (FMDatabase *)getDatabase {
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Warc-performSelector-leaks"
+    SEL selector = NSSelectorFromString(@"database");
+    if ([self respondsToSelector:selector]) {
+        return [self performSelector:selector];
+    }
+#pragma clang diagnostic pop
+    return nil;
 }
 
 - (void)setShouldCacheStatements:(BOOL)value {
-    [_db setShouldCacheStatements:value];
+    FMDatabase *db = [self getDatabase];
+    [db setShouldCacheStatements:value];
 }
 
 - (void)setDatabaseQueueSpecific {
-    dispatch_queue_set_specific(_queue, kDatabaseQueueSpecificKey, (__bridge void *)self, NULL);
+    dispatch_queue_set_specific([self getQueue], kDatabaseQueueSpecificKey, (__bridge void *)self, NULL);
 }
 
 - (void)syncInDatabase:(void (^)(FMDatabase *db))block {
@@ -32,7 +47,7 @@ static const void * const kDatabaseQueueSpecificKey = &kDatabaseQueueSpecificKey
     
     dispatch_block_t task = ^() {
         
-        FMDatabase *db = [self database];
+        FMDatabase *db = [self getDatabase];
         block(db);
         
         if ([db hasOpenResultSets]) {
@@ -51,7 +66,7 @@ static const void * const kDatabaseQueueSpecificKey = &kDatabaseQueueSpecificKey
     if (currentSyncQueue == self) {
         task();
     } else {
-        dispatch_sync(_queue, task);
+        dispatch_sync([self getQueue], task);
     }
     
     FMDBRelease(self);
@@ -64,7 +79,7 @@ static const void * const kDatabaseQueueSpecificKey = &kDatabaseQueueSpecificKey
     
     dispatch_block_t task = ^() {
         
-        FMDatabase *db = [self database];
+        FMDatabase *db = [self getDatabase];
         block(db);
         
         if ([db hasOpenResultSets]) {
@@ -83,30 +98,10 @@ static const void * const kDatabaseQueueSpecificKey = &kDatabaseQueueSpecificKey
     if (currentSyncQueue == self) {
         task();
     } else {
-        dispatch_async(_queue, task);
+        dispatch_async([self getQueue], task);
     }
     
     FMDBRelease(self);
-}
-
-- (FMDatabase*)database {
-    if (!_db) {
-        _db = FMDBReturnRetained([FMDatabase databaseWithPath:_path]);
-        
-#if SQLITE_VERSION_NUMBER >= 3005000
-        BOOL success = [_db openWithFlags:_openFlags];
-#else
-        BOOL success = [_db open];
-#endif
-        if (!success) {
-            NSLog(@"FMDatabaseQueue could not reopen database for path %@", _path);
-            FMDBRelease(_db);
-            _db  = 0x00;
-            return 0x00;
-        }
-    }
-    
-    return _db;
 }
 
 @end
