@@ -301,7 +301,7 @@ static const double kTransactionTimeInterval = 1;
                 Class propertyClass = [[modelClass propertyClasses] objectForKey:property];
                 value = [propertyClass reverseTransformedValue:data];
             } else {
-                value = [self valueAfterDecodingData:data class:modelClass];
+                value = [self valueAfterDecodingData:data];
             }
             if (!value) {
                 NSAssert(NO, @"database=%@, table=%@, property=%@", [modelClass dbName], [modelClass tableName], property);
@@ -337,15 +337,10 @@ static const double kTransactionTimeInterval = 1;
     }
 }
 
-- (id)valueAfterDecodingData:(NSData *)data
-                       class:(Class<GYModelObjectProtocol>)modelClass {
+- (id)valueAfterDecodingData:(NSData *)data {
     id value = nil;
-    @try {
-        if (@available(iOS 12, *)) {
-            value = [NSKeyedUnarchiver unarchivedObjectOfClass:modelClass fromData:data error:nil];
-        } else {
-            value = [NSKeyedUnarchiver unarchiveObjectWithData:data];
-        }
+    @try { 
+        value = [NSKeyedUnarchiver unarchiveObjectWithData:data];
     }
     @catch (NSException *exception) {
         value = nil;
